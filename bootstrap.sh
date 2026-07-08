@@ -17,7 +17,11 @@ set -euo pipefail
 
 DOTFILES_REPO="https://github.com/HananSolves/dotfiles.git"
 DOTFILES_DIR="$HOME/dotfiles"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    SCRIPT_DIR=""
+fi
 
 echo "==> Installing prerequisites (git, stow)..."
 sudo dnf install -y git stow

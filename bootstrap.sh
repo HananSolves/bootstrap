@@ -58,25 +58,25 @@ else
     echo "    No packages-flatpak.txt found next to this script, skipping."
 fi
 
-# echo "==> Setting up Homebrew packages..."
-# if [ -f "$SCRIPT_DIR/Brewfile" ]; then
-#     if ! command -v brew &>/dev/null; then
-#         echo "    Homebrew not found, installing build tools + Homebrew..."
-#         sudo dnf group install -y development-tools
-#         sudo dnf install -y procps-ng curl file
-#         NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-#     fi
-#     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-#     brew bundle install --file="$SCRIPT_DIR/Brewfile"
-#
-#     if ! grep -qs 'linuxbrew' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null; then
-#         echo "    NOTE: add this line to your shell rc file (in your dotfiles repo)"
-#         echo "    so brew is on PATH in new terminals:"
-#         echo '      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
-#     fi
-# else
-#     echo "    No Brewfile found next to this script, skipping."
-# fi
+echo "==> Setting up Homebrew packages..."
+if [ -f "$SCRIPT_DIR/Brewfile" ]; then
+    if ! command -v brew &>/dev/null; then
+        echo "    Homebrew not found, installing build tools + Homebrew..."
+        sudo dnf group install -y development-tools
+        sudo dnf install -y procps-ng curl file
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    brew bundle install --file="$SCRIPT_DIR/Brewfile"
+
+    if ! grep -qs 'linuxbrew' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null; then
+        echo "    NOTE: add this line to your shell rc file (in your dotfiles repo)"
+        echo "    so brew is on PATH in new terminals:"
+        echo '      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+    fi
+else
+    echo "    No Brewfile found next to this script, skipping."
+fi
 
 echo ""
 echo "Bootstrap complete. Log out/in (or reboot) so shell/env changes fully apply."

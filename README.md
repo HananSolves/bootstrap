@@ -1,4 +1,4 @@
-# linux-bootstrap
+# Bootstrap
 
 Bootstrap script for a fresh Fedora (KDE) install. Installs git+stow,
 clones and stows [dotfiles](https://github.com/HananSolves/dotfiles),

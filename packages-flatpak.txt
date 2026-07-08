@@ -1,0 +1,9 @@
+app.zen_browser.zen
+com.protonvpn.www
+com.rustdesk.RustDesk
+com.vscodium.codium
+org.cryptomator.Cryptomator
+org.jellyfin.JellyfinDesktop
+org.keepassxc.KeePassXC
+org.qbittorrent.qBittorrent
+org.videolan.VLC

@@ -1,0 +1,17 @@
+android-tools
+btop
+chromium
+eza
+fastfetch
+fzf
+git
+gitleaks
+htop
+neovim
+stow
+syncthing
+thefuck
+timeshift
+wezterm
+zoxide
+zsh

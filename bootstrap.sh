@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
 # bootstrap.sh
 # Run this on a FRESH Fedora (KDE) install. It:
-#   1. installs git + stow
+#   1. installs stow
 #   2. clones your DOTFILES repo and stows it into $HOME
 #   3. reinstalls your usual packages via dnf, Flatpak, and Homebrew,
 #      using the package lists that live alongside this script
-#
-# Usage:
-#   git clone <this-bootstrap-repo-url> ~/bootstrap
-#   cd ~/bootstrap && ./bootstrap.sh
-#
-#   -- or, once pushed, one-liner from a fresh install --
-#   curl -fsSL <raw-url-to-this-file> | bash
 
 set -euo pipefail
 
@@ -23,8 +16,8 @@ else
     SCRIPT_DIR=""
 fi
 
-echo "==> Installing prerequisites (git, stow)..."
-sudo dnf install -y git stow
+echo "==> Installing prerequisite (stow)..."
+sudo dnf install -y stow
 
 echo "==> Fetching dotfiles from $DOTFILES_REPO ..."
 if [ -d "$DOTFILES_DIR/.git" ]; then

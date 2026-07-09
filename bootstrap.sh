@@ -78,5 +78,12 @@ else
     echo "    No Brewfile found next to this script, skipping."
 fi
 
+echo "==> Installing third-party repo apps"
+if [ -x "$SCRIPT_DIR/thirdparty-repos.sh" ]; then
+    "$SCRIPT_DIR/thirdparty-repos.sh"
+else
+    echo "    thirdparty-repos.sh not found or not executable, skipping."
+fi
+
 echo ""
 echo "Bootstrap complete. Log out/in (or reboot) so shell/env changes fully apply."

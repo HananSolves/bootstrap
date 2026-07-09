@@ -12,7 +12,7 @@ stow
 syncthing
 thefuck
 timeshift
-wezterm
 zoxide
 zsh
 gh
+@virtualization

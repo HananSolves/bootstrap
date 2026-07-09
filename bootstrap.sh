@@ -3,11 +3,10 @@
 # Run this on a FRESH Fedora (KDE) install. It:
 #   1. installs stow
 #   2. clones your DOTFILES repo and stows it into $HOME
-#   3. reinstalls your usual packages via dnf, Flatpak, and Homebrew,
+#   3. adds third-party repos (so packages like wezterm are resolvable)
+#   4. reinstalls your usual packages via dnf, Flatpak, and Homebrew,
 #      using the package lists that live alongside this script
-
 set -euo pipefail
-
 DOTFILES_REPO="https://github.com/HananSolves/dotfiles.git"
 DOTFILES_DIR="$HOME/dotfiles"
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -15,10 +14,8 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
 else
     SCRIPT_DIR=""
 fi
-
 echo "==> Installing prerequisite (stow)..."
 sudo dnf install -y stow
-
 echo "==> Fetching dotfiles from $DOTFILES_REPO ..."
 if [ -d "$DOTFILES_DIR/.git" ]; then
     echo "    Repo already present at $DOTFILES_DIR, pulling latest..."
@@ -26,18 +23,20 @@ if [ -d "$DOTFILES_DIR/.git" ]; then
 else
     git clone "$DOTFILES_REPO" "$DOTFILES_DIR"
 fi
-
 echo "==> Symlinking dotfiles with stow..."
-# --restow = unlink + relink, so this is safe to run again later too.
 (cd "$DOTFILES_DIR" && stow --restow --target="$HOME" .)
-
+echo "==> Installing third-party repo apps"
+if [ -x "$SCRIPT_DIR/thirdparty-repos.sh" ]; then
+    "$SCRIPT_DIR/thirdparty-repos.sh"
+else
+    echo "    thirdparty-repos.sh not found or not executable, skipping."
+fi
 echo "==> Installing dnf packages..."
 if [ -s "$SCRIPT_DIR/packages-dnf.txt" ]; then
-    xargs -a "$SCRIPT_DIR/packages-dnf.txt" sudo dnf install -y
+    xargs -a "$SCRIPT_DIR/packages-dnf.txt" sudo dnf install -y --skip-unavailable
 else
     echo "    No packages-dnf.txt found next to this script, skipping."
 fi
-
 echo "==> Installing Flatpak apps..."
 if [ -s "$SCRIPT_DIR/packages-flatpak.txt" ]; then
     if ! command -v flatpak &>/dev/null; then
@@ -50,7 +49,6 @@ if [ -s "$SCRIPT_DIR/packages-flatpak.txt" ]; then
 else
     echo "    No packages-flatpak.txt found next to this script, skipping."
 fi
-
 echo "==> Setting up Homebrew packages..."
 if [ -f "$SCRIPT_DIR/Brewfile" ]; then
     if ! command -v brew &>/dev/null; then
@@ -61,7 +59,6 @@ if [ -f "$SCRIPT_DIR/Brewfile" ]; then
     fi
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
     brew bundle install --file="$SCRIPT_DIR/Brewfile"
-
     if ! grep -qs 'linuxbrew' "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null; then
         echo "    NOTE: add this line to your shell rc file (in your dotfiles repo)"
         echo "    so brew is on PATH in new terminals:"
@@ -70,13 +67,5 @@ if [ -f "$SCRIPT_DIR/Brewfile" ]; then
 else
     echo "    No Brewfile found next to this script, skipping."
 fi
-
-echo "==> Installing third-party repo apps"
-if [ -x "$SCRIPT_DIR/thirdparty-repos.sh" ]; then
-    "$SCRIPT_DIR/thirdparty-repos.sh"
-else
-    echo "    thirdparty-repos.sh not found or not executable, skipping."
-fi
-
 echo ""
 echo "Bootstrap complete. Log out/in (or reboot) so shell/env changes fully apply."

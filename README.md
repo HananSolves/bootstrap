@@ -1,6 +1,6 @@
 # Bootstrap
 
-Bootstrap script for a fresh Fedora (KDE) install. Installs git+stow,
+Bootstrap script for a fresh Fedora (KDE) install. Installs stow,
 clones and stows [dotfiles](https://github.com/HananSolves/dotfiles),
 then reinstalls packages via dnf, Flatpak, and Homebrew.
 
@@ -8,14 +8,14 @@ then reinstalls packages via dnf, Flatpak, and Homebrew.
 
 ```bash
 git clone git@github.com:HananSolves/bootstrap.git ~/bootstrap
-cd ~/bootstrap && ./bootstrap.sh
+cd ~/bootstrap && chmod +x bootstrap.sh && ./bootstrap.sh
 ```
 
 Or, as a one-liner on a fresh install (clones the repo, then runs the script from disk so it can find the package
 list files sitting alongside it):
 
 ```bash
-git clone https://github.com/HananSolves/bootstrap.git ~/bootstrap && ~/bootstrap/bootstrap.sh
+git clone https://github.com/HananSolves/bootstrap.git ~/bootstrap && chmod +x ~/bootstrap/bootstrap.sh && ~/bootstrap/bootstrap.sh
 ```
 
 > **Note:** `curl | bash` won't work here — it only fetches `bootstrap.sh` itself, not the

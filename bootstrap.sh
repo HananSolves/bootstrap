@@ -26,10 +26,11 @@ fi
 echo "==> Symlinking dotfiles with stow..."
 (cd "$DOTFILES_DIR" && stow --restow --target="$HOME" .)
 echo "==> Installing third-party repo apps"
-if [ -x "$SCRIPT_DIR/thirdparty-repos.sh" ]; then
+if [ -f "$SCRIPT_DIR/thirdparty-repos.sh" ]; then
+    chmod +x "$SCRIPT_DIR/thirdparty-repos.sh"
     "$SCRIPT_DIR/thirdparty-repos.sh"
 else
-    echo "    thirdparty-repos.sh not found or not executable, skipping."
+    echo "    thirdparty-repos.sh not found, skipping."
 fi
 echo "==> Installing dnf packages..."
 if [ -s "$SCRIPT_DIR/packages-dnf.txt" ]; then

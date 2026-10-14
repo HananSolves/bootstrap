@@ -7,3 +7,8 @@ org.jellyfin.JellyfinDesktop
 org.keepassxc.KeePassXC
 org.qbittorrent.qBittorrent
 org.videolan.VLC
+io.appflowy.AppFlowy
+org.gnome.DejaDup
+com.getpostman.Postman
+com.discordapp.Discord
+io.podman_desktop.PodmanDesktop

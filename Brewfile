@@ -1,6 +1,8 @@
-thefuck
-powerlevel10k
-zsh-autosuggestions
-zsh-syntax-highlighting
-eza
-zoxide
+brew "pnpm"
+brew "thefuck"
+brew "powerlevel10k"
+brew "zsh-autosuggestions"
+brew "zsh-syntax-highlighting"
+brew "eza"
+brew "zoxide"
+brew "python-tk@3.14"

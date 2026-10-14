@@ -51,5 +51,3 @@ Done. A couple of notes:
      git commit -m "Update package list"
      git push
 EOF
-SCRIPT_EOF
-echo written

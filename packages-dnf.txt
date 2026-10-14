@@ -16,3 +16,6 @@ zoxide
 zsh
 gh
 @virtualization
+wine
+postgresql-server
+ydotool

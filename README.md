@@ -1,9 +1,11 @@
 # Bootstrap
 
-Bootstrap script for a fresh Fedora (KDE) install. Clones and stows
+[![CI](https://github.com/HananSolves/bootstrap/actions/workflows/ci.yml/badge.svg)](https://github.com/HananSolves/bootstrap/actions/workflows/ci.yml)
+
+Bootstrap script for a fresh Fedora (KDE) install. Removes preinstalled packages you don't want, clones and stows
 [dotfiles](https://github.com/HananSolves/dotfiles), adds third-party repos, then installs packages via dnf, Flatpak
-and Homebrew — with a TUI to pick what gets installed, a live progress dashboard, detailed logs, automatic retries and
-resume after interruptions.
+and Homebrew — with a minimal TUI to pick what to do (including extra packages found by searching), a live progress
+dashboard, detailed logs, automatic retries, resume after interruptions and a desktop notification when it's done.
 
 ## Usage
 
@@ -16,26 +18,59 @@ git clone https://github.com/HananSolves/bootstrap.git ~/bootstrap && ~/bootstra
 What happens:
 
 1. **Preflight** — asks for sudo once (kept alive for the whole run), waits for internet if it's down, and installs
-   the few tools the script itself needs (`newt` for the dialogs, `util-linux-script` for live progress bars, `stow`).
-2. **Choose** — a checklist of what to set up (system upgrade, dotfiles, third-party apps, dnf, Flatpak, Homebrew).
-   For each package source you pick **Install all** or **Choose individually**, which lists every package to toggle.
-3. **Run** — a dashboard with a pinned header (phase, overall progress bar, done/failed/skipped counts, current item)
-   while each tool's own output — including its download progress bars — scrolls underneath.
-4. **Summary** — what installed, what failed and why, and where the logs are.
+   the few tools the script itself needs ([`gum`](https://github.com/charmbracelet/gum) for the menus — it's in
+   Fedora's repos — `util-linux-script` for live progress bars, `stow`, `gnupg2`).
+2. **Choose** — it checks what's already installed, then shows one menu with a line per phase and package source and
+   its current selection:
+
+   ```
+   ◆ Fedora Bootstrap
+
+   › ● Remove packages    3 to remove · 1 already gone
+     ○ System upgrade     off
+     ● Dotfiles           clone + stow
+     ● DNF packages       4 to install · 17 installed
+     ● Flatpak apps       2 to install · 12 installed
+     → Start              9 to do · 30 already done
+   ```
+
+   Open any line, change it, come back, open another — in any order. Nothing changes on the system until **Start**.
+   Each source offers **Pick packages** (a checklist marking what's installed), **Search** (Fedora's repos, Flathub,
+   Homebrew — or, for removals, your installed packages), **Select all / only the ones not installed / none**.
+   Packages added by searching can be saved to the lists for future runs.
+3. **Run** — a small pinned header (phase, progress bar, counts, current item) while each tool's own output scrolls
+   underneath.
+4. **Summary** — what was installed or removed, what was already done, what failed and why, where the logs are — and
+   a desktop notification, so you can walk away during a long run.
+
+**Keys:** arrows move, Enter opens/confirms, Space or x toggles in lists, Ctrl-A selects all, Esc goes back a screen
+(on the main menu: asks whether to quit), Ctrl-C during the run pauses it (retry / skip / quit and resume later).
 
 ### Options
 
 | Option             | Effect                                                                     |
 |--------------------|----------------------------------------------------------------------------|
-| `-y`, `--yes`      | Don't ask what to install — install everything listed (or resume)          |
-| `--only LIST`      | Only these phases: `upgrade,dotfiles,thirdparty,dnf,flatpak,brew`          |
+| `-y`, `--yes`      | Don't ask — do everything listed (or resume an unfinished run)             |
+| `--only LIST`      | Only these phases: `remove,upgrade,dotfiles,thirdparty,dnf,flatpak,brew`   |
 | `--resume`         | Resume the previous unfinished run without asking                          |
 | `--fresh`          | Ignore the previous run and choose packages again                          |
-| `--no-tui`         | Plain output and y/n prompts (one per package when choosing individually)  |
+| `--no-tui`         | Plain output, numbered menus and y/n prompts instead of the gum TUI        |
+| `--downloads N`    | Files dnf and Homebrew download at once, 1–20 (default: dnf 10, brew auto) |
+| `--no-notify`      | No desktop notification at the end                                         |
 | `--retries N`      | Attempts per item before giving up (default 3)                             |
 | `--net-timeout S`  | How long to wait for a lost connection before asking what to do (1800)     |
 
 `./thirdparty-repos.sh` is a shortcut for `./bootstrap.sh --only thirdparty`.
+
+## Speed
+
+- **One transaction per source.** Before going item by item, every missing package of a source is installed in a
+  single `dnf install` / `flatpak install` / `brew install`: dependencies are resolved once and downloads overlap.
+  Each item is then verified on its own, and anything the batch didn't manage is retried one at a time — so one bad
+  name never blocks the rest (`dnf --skip-unavailable`; an unknown Flatpak ID is dropped and the batch retried).
+- **Parallel downloads.** dnf fetches 10 files at once (its default is 3) and Homebrew sizes its pool from the CPU
+  count. On a slow or metered link, `--downloads 2` is gentler. Installs themselves can't run in parallel: dnf,
+  Flatpak and Homebrew each lock their own database while installing.
 
 ## Reliability
 
@@ -43,19 +78,51 @@ What happens:
   bad name or dead repo only fails that item. Third-party repos are added only for apps you selected and are marked
   `skip_if_unavailable`.
 - **Retries with backoff.** Failed items are retried (10s, 20s…). Failures that can't succeed on retry — an unknown
-  package name, a dependency conflict — are detected and not retried.
+  package name, a dependency conflict — are detected and not retried. A broken metadata file from a mirror is
+  cleared from dnf's cache before the retry.
 - **Network drops.** Before each item the script checks connectivity; if offline it pauses with a live
   "waiting for connection" status and continues when the link is back. dnf is configured to ride out stalls
-  (`timeout=120`, `minrate=100`), and RPMs it already downloaded stay cached for the retry. Direct downloads (Proton
-  Authenticator RPM, Homebrew installer, repo files) resume from the last byte (`curl --continue-at -`), even across
-  runs; Homebrew resumes partial bottle downloads itself.
+  (`timeout=120`, `minrate=100`), and RPMs it already downloaded stay cached for the retry. Direct downloads resume
+  from the last byte (`curl --continue-at -`), even across runs; Homebrew resumes partial bottle downloads itself.
 - **Resume.** Progress is saved after every item in `~/.local/state/bootstrap/`. If a run is interrupted — Ctrl-C,
   closed terminal, reboot — or finishes with failures, the next run offers to resume, skipping everything that already
   succeeded.
-- **Ctrl-C** during an install asks: retry it, skip it, or quit (and resume later).
 - **Dotfile conflicts.** Files that would block `stow` (e.g. Fedora's default `~/.bashrc`) are moved to
   `~/.dotfiles-backup/<timestamp>/` instead of aborting.
 - **No sleep, no double runs.** The machine is kept awake during the run, and a lock prevents two runs at once.
+
+## Security
+
+Every third-party package is signature-checked before it's installed:
+
+| App                  | Package check                         | Repo metadata check    |
+|----------------------|---------------------------------------|------------------------|
+| VS Code              | Microsoft key                         | Microsoft key          |
+| Cursor               | Anysphere key                         | Anysphere key          |
+| Antigravity          | Google Linux packages key             | Artifact Registry key  |
+| Mullvad Browser      | Mullvad key (from Mullvad's repo file)| —                      |
+| WezTerm (Copr)       | Copr project key                      | —                      |
+| Proton Authenticator | SHA-512 from Proton's update manifest (Proton doesn't sign this RPM) | — |
+
+The Microsoft, Anysphere, Google and Artifact Registry keys are **pinned by fingerprint** in `lib/thirdparty.sh`:
+a downloaded key is refused unless its fingerprint matches, then saved to `/etc/pki/rpm-gpg/` and referenced from the
+repo file as a local `file://` path, so nothing fetched later can swap it. If a vendor rotates its key, installs from
+that repo fail with a signature error until the new fingerprint (from the vendor's documentation) is put there.
+
+## Removing packages
+
+`packages-remove.txt` lists packages to remove — run first, before anything is installed:
+
+```
+kmahjongg              # a dnf package
+@kde-education         # a dnf group
+flatpak:org.kde.kpat   # a Flatpak app (per-user or system-wide)
+```
+
+Removal is careful: dnf's own preview runs first, and if other installed packages depend on the one being removed,
+it's left alone (and reported) — unless those dependents are on the list too, in which case they go together. dnf
+also refuses to touch protected packages such as the kernel or `plasma-desktop`. The **Remove packages** screen can
+search your installed packages to find exact names.
 
 ## Logs
 
@@ -72,9 +139,22 @@ less -R ~/.local/state/bootstrap/logs/latest/bootstrap.log
 
 ## Package lists
 
+- `packages-remove.txt` — packages to remove (see above)
 - `packages-dnf.txt` — one package per line; `@group` for dnf groups; `#` comments allowed
 - `packages-flatpak.txt` — Flathub app IDs
 - `Brewfile` — `brew "name"` and `tap "user/repo"` lines
 - Third-party apps — defined in `lib/thirdparty.sh` (add an id, a description and a `tp_<id>` function)
 
-`get-installed-packages.sh` regenerates the first three from an already-configured machine.
+`get-installed-packages.sh` regenerates the dnf, Flatpak and Homebrew lists from an already-configured machine.
+Packages added through the search screens are appended to these files if you choose to save them.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push, every pull request and weekly:
+
+- **shellcheck** over every script
+- **package lists** — checks that every entry still exists: dnf names and groups in Fedora's repos, Flatpak IDs on
+  Flathub, formulae in Homebrew's index. A renamed or dropped package shows up as an annotation on its line. The
+  weekly run catches packages that disappear upstream while the repo doesn't change.
+- **smoke test** — runs `bootstrap.sh` for real in a Fedora container (install, remove, then a second run that must
+  change nothing)

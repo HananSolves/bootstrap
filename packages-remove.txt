@@ -1,0 +1,7 @@
+# Packages to remove - one per line, removed before anything is installed.
+#   name            a dnf package, e.g. kmahjongg
+#   @group          a dnf group, e.g. @kde-education
+#   flatpak:APP.ID  a Flatpak app, e.g. flatpak:org.kde.kpat
+# A package that other installed packages still depend on is left alone
+# (and reported) unless those dependents are listed here too. Search for
+# installed packages from the "Remove packages" screen to find exact names.

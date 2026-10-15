@@ -5,10 +5,20 @@
 # blocked repo (e.g. Mullvad's, blocked on some networks) can't break dnf for
 # everything else.
 #
+# Signatures: every repo here checks package signatures (gpgcheck) and, where
+# the vendor signs it, the repo metadata too (repo_gpgcheck). Vendor keys are
+# pinned by fingerprint below: a key is downloaded, refused unless its
+# fingerprint matches, and saved to /etc/pki/rpm-gpg/ - the repo files point
+# at that local copy, so nothing fetched later can swap the key. If a vendor
+# rotates its key, installs fail with a signature error until the new
+# fingerprint (from the vendor's docs) is put here.
+#
 # To add an app: append its id to THIRDPARTY_APPS, give it a TP_DESC entry,
 # and write tp_<id with - replaced by _>.
 
 YUM_REPOS_DIR="${YUM_REPOS_DIR:-/etc/yum.repos.d}"
+RPM_KEY_DIR="${RPM_KEY_DIR:-/etc/pki/rpm-gpg}"
+PROTON_MANIFEST=https://proton.me/download/authenticator/linux/version.json
 THIRDPARTY_APPS=(code cursor antigravity mullvad-browser wezterm proton-authenticator)
 declare -A TP_DESC=(
     [code]="Visual Studio Code (Microsoft repo)"
@@ -40,15 +50,48 @@ install_thirdparty() {
     "tp_${app//-/_}"
 }
 
-# tp_add_repo FILE - install a .repo file read from stdin into $YUM_REPOS_DIR
-tp_add_repo() {
-    local dest=$YUM_REPOS_DIR/$1 tmp
-    if [[ -f $dest ]]; then
-        cat > /dev/null
+# key_fingerprint FILE - primary-key fingerprint of an OpenPGP key file
+# (read in a throwaway keyring, so nothing touches ~/.gnupg)
+key_fingerprint() {
+    local home
+    home=$(mktemp -d) || return 1
+    gpg --homedir "$home" --batch --show-keys --with-colons "$1" 2>/dev/null |
+        awk -F: '$1 == "fpr" { print $10; exit }'
+    rm -rf -- "$home"
+}
+
+# tp_install_key NAME URL FINGERPRINT - download a vendor's signing key,
+# refuse it unless its fingerprint is the pinned one, then save it as
+# $RPM_KEY_DIR/RPM-GPG-KEY-NAME and add it to rpm's keyring
+tp_install_key() {
+    local url=$2 want=$3 file="$DOWNLOAD_DIR/RPM-GPG-KEY-$1" dest="$RPM_KEY_DIR/RPM-GPG-KEY-$1" got
+    if [[ -f $dest && $(key_fingerprint "$dest") == "$want" ]]; then
         return 0
     fi
+    download "$url" "$file" || return
+    got=$(key_fingerprint "$file")
+    if [[ $got != "$want" ]]; then
+        rm -f -- "$file"
+        FAIL_REASON="signing key at $url has fingerprint ${got:-unreadable}, expected $want - refusing it"
+        return 2
+    fi
+    run_cmd --root install -D -m 0644 "$file" "$dest" || return
+    rm -f -- "$file"
+    run_cmd --root rpm --import "$dest"
+}
+
+# tp_add_repo FILE - install a .repo file read from stdin into
+# $YUM_REPOS_DIR. A differing existing copy is replaced: these files are
+# ours, and an older one may predate signature checking.
+tp_add_repo() {
+    local dest=$YUM_REPOS_DIR/$1 tmp
     tmp=$(mktemp) || return 1
     cat > "$tmp"
+    if [[ -f $dest ]] && cmp -s "$tmp" "$dest"; then
+        rm -f -- "$tmp"
+        return 0
+    fi
+    [[ -f $dest ]] && log INFO "replacing outdated $dest"
     tp_install_repo_file "$tmp" "$dest"
 }
 
@@ -73,38 +116,53 @@ tp_install_repo_file() {
 }
 
 tp_code() {
-    run_cmd --root rpm --import https://packages.microsoft.com/keys/microsoft.asc || return
-    tp_add_repo vscode.repo <<'EOF' || return
+    tp_install_key microsoft https://packages.microsoft.com/keys/microsoft.asc \
+        BC528686B50D79E339D3721CEB3E94ADBE1229CF || return
+    tp_add_repo vscode.repo <<EOF || return
 [code]
 name=Visual Studio Code
 baseurl=https://packages.microsoft.com/yumrepos/vscode
 enabled=1
 gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+repo_gpgcheck=1
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-microsoft
 skip_if_unavailable=1
 EOF
     install_dnf code
 }
 
 tp_cursor() {
-    tp_add_repo cursor.repo <<'EOF' || return
+    # packages and repo metadata are both signed with Anysphere's key
+    tp_install_key cursor https://downloads.cursor.com/keys/anysphere.asc \
+        380FF4BCDC34A4BD92A3565342A1772E62E492D6 || return
+    tp_add_repo cursor.repo <<EOF || return
 [cursor]
 name=Cursor
 baseurl=https://downloads.cursor.com/yumrepo
 enabled=1
-gpgcheck=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-cursor
 skip_if_unavailable=1
 EOF
     install_dnf cursor
 }
 
 tp_antigravity() {
-    tp_add_repo antigravity.repo <<'EOF' || return
+    # packages are signed with Google's Linux packages key, the repo
+    # metadata with Artifact Registry's repository key
+    tp_install_key google https://dl.google.com/linux/linux_signing_key.pub \
+        EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 || return
+    tp_install_key artifact-registry https://us-central1-yum.pkg.dev/doc/repo-signing-key.gpg \
+        35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3 || return
+    tp_add_repo antigravity.repo <<EOF || return
 [antigravity-rpm]
 name=Antigravity RPM Repository
 baseurl=https://us-central1-yum.pkg.dev/projects/antigravity-auto-updater-dev/antigravity-rpm
 enabled=1
-gpgcheck=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-google file://$RPM_KEY_DIR/RPM-GPG-KEY-artifact-registry
 skip_if_unavailable=1
 EOF
     install_dnf antigravity
@@ -126,18 +184,29 @@ tp_wezterm() {
     install_dnf wezterm
 }
 
+# Proton doesn't sign this RPM. The best check available is the SHA-512 that
+# Proton's own update manifest lists for each release: the RPM is fetched by
+# its versioned URL and refused unless the checksum matches.
 tp_proton_authenticator() {
-    local rpmfile="$DOWNLOAD_DIR/ProtonAuthenticator.rpm" name rc=0
+    local manifest="$DOWNLOAD_DIR/proton-authenticator.json" url="" sha="" rpmfile name rc=0
+    download "$PROTON_MANIFEST" "$manifest" || return
+    { read -r url; read -r sha; } < <(proton_latest_rpm "$manifest")
+    rm -f -- "$manifest"
+    if [[ ! $url =~ ^https://proton\.me/.+\.rpm$ || ! $sha =~ ^[0-9a-f]{128}$ ]]; then
+        FAIL_REASON="could not find the RPM and its checksum in $PROTON_MANIFEST"
+        return 1
+    fi
+    rpmfile="$DOWNLOAD_DIR/${url##*/}"
     # A finished download from an earlier interrupted run is reused if it's
     # intact; a partial one (.part) is resumed by download().
-    if [[ -f $rpmfile ]] && ! rpm -K --nosignature "$rpmfile" &>/dev/null; then
+    if [[ -f $rpmfile ]] && ! sha512_ok "$rpmfile" "$sha"; then
         rm -f -- "$rpmfile"
     fi
     if [[ ! -f $rpmfile ]]; then
-        download https://proton.me/download/authenticator/linux/ProtonAuthenticator.rpm "$rpmfile" || return
-        if ! rpm -K --nosignature "$rpmfile" &>/dev/null; then
+        download "$url" "$rpmfile" || return
+        if ! sha512_ok "$rpmfile" "$sha"; then
             rm -f -- "$rpmfile"
-            FAIL_REASON="downloaded RPM is corrupt - will re-download"
+            FAIL_REASON="downloaded RPM doesn't match the SHA-512 in Proton's manifest - will re-download"
             return 1
         fi
     fi
@@ -150,3 +219,17 @@ tp_proton_authenticator() {
     ((rc == 0)) && rc=1
     return "$rc"
 }
+
+# proton_latest_rpm MANIFEST - print the newest release's .rpm URL and its
+# SHA-512, one per line (releases are listed newest first)
+proton_latest_rpm() {
+    python3 -I -c '
+import json, sys
+for rel in json.load(open(sys.argv[1]))["Releases"]:
+    for f in rel.get("File", []):
+        if f.get("Url", "").endswith(".rpm"):
+            print(f["Url"]); print(f.get("Sha512CheckSum", "").lower()); sys.exit()
+' "$1" 2>/dev/null
+}
+
+sha512_ok() { [[ $(sha512sum < "$1" | cut -d' ' -f1) == "$2" ]]; }

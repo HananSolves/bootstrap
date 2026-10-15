@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # weekly, to catch packages renamed or dropped upstream between commits
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install tools
+        run: dnf -y -q install ShellCheck git
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: shellcheck -x bootstrap.sh thirdparty-repos.sh get-installed-packages.sh ci/*.sh
+      - name: bash syntax
+        run: for f in bootstrap.sh lib/*.sh ci/*.sh; do bash -n "$f"; done
+
+  lists:
+    name: package lists exist
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install tools
+        run: dnf -y -q install git
+      - uses: actions/checkout@v5
+      - name: Check every listed package exists
+        run: ci/check-lists.sh
+
+  smoke:
+    name: bootstrap.sh in a Fedora container
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install tools
+        run: dnf -y -q install git
+      - uses: actions/checkout@v5
+      - name: Install, remove, and re-run
+        run: ci/smoke-test.sh

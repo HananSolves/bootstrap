@@ -36,6 +36,8 @@ ITEMS_PROCESSED=0
 COUNT_OK=0
 COUNT_FAIL=0
 COUNT_SKIP=0
+COUNT_PRESENT=0      # OK items that needed no change (subset of COUNT_OK)
+COUNT_REMOVED=0      # OK items that were removed (subset of COUNT_OK)
 STEP_SEQ=0
 STEP_LOG=/dev/null   # per-attempt log of the item currently being processed
 ITEM_NOTE=""         # set by an install function to annotate a success
@@ -150,7 +152,8 @@ run_cmd() {
 
     # Copy just this command's output (everything after its "$ cmd" marker)
     # into the main log, indented, so bootstrap.log reads top to bottom.
-    awk -v m="\$ $cmdstr_display" '$0 == m { buf = ""; on = 1; next } on { buf = buf $0 "\n" } END { printf "%s", buf }' \
+    # (via the environment: awk -v would interpret backslashes in the command)
+    MARK="\$ $cmdstr_display" awk '$0 == ENVIRON["MARK"] { buf = ""; on = 1; next } on { buf = buf $0 "\n" } END { printf "%s", buf }' \
         "$STEP_LOG" | clean_output | sed -E '/^[[:space:]]*$/d; s/^/        | /' >> "$LOG_FILE"
     log CMD "exit $rc after $((SECONDS - start))s"
     return "$rc"
@@ -178,14 +181,16 @@ wait_for_network() {
                 ui_note error "Still offline after $((waited / 60)) min - stopping. Re-run to resume."
                 exit 75
             fi
-            key=$(ui_prompt_key "Still offline after $((waited / 60)) min: [w]ait more  [s]kip this item  [q]uit (resume later)" wsq)
+            notify_desktop critical network-offline "Bootstrap is waiting for you" \
+                "Still offline after $((waited / 60)) min - choose in the terminal: wait, skip or quit."
+            key=$(ui_prompt_key "Still offline after $((waited / 60)) min - [w]ait more  [s]kip  [q]uit (resume later)" wsq)
             case $key in
                 s) return 1 ;;
                 q) exit 75 ;;
                 *) waited=0 ;;
             esac
         fi
-        key=$(ui_countdown "$delay" "Offline for $(fmt_duration "$waited") - checking again in %ds   [s] skip item  [q] quit & resume later")
+        key=$(ui_countdown "$delay" "Offline for $(fmt_duration "$waited") - checking again in %ds - [s]kip  [q]uit (resume later)")
         case $key in
             s) log INFO "user skipped item while offline"; return 1 ;;
             q) exit 75 ;;
@@ -238,6 +243,7 @@ classify_failure() {
     case $src in
         dnf | thirdparty | system)
             permanent='No match for argument|Unable to find a match|No match for group|nothing provides|Problem:|conflicts with|is not signed|GPG check FAILED' ;;
+        remove) permanent='protected packages|No match for argument|Failed to resolve the transaction|is not installed' ;;
         flatpak) permanent='Nothing matches|No remote refs found|not found in remote|Invalid id|No such ref' ;;
         brew) permanent='No available formula|No formulae or casks found|No formulae found|is not a valid' ;;
         dotfiles) permanent='Not possible to fast-forward|would be overwritten|diverged|not a git repository' ;;
@@ -273,7 +279,8 @@ process_item() {
         ui_item_start "$src" "$name" "$attempt" "$kind"
         log INFO "[$src] $name: attempt $attempt/$MAX_ATTEMPTS (log: ${STEP_LOG#"$LOG_DIR/"})"
 
-        if [[ $src != dotfiles || $name != stow ]] && ! wait_for_network; then
+        # stowing and removing are purely local - no point waiting for a network
+        if [[ $src != remove && ( $src != dotfiles || $name != stow ) ]] && ! wait_for_network; then
             FAIL_REASON="skipped while offline"
             finish_item "$src" "$name" SKIP $((SECONDS - start)) "$kind"
             return 1
@@ -294,7 +301,7 @@ process_item() {
 
         if ((rc == 130)); then
             if ((!INTERACTIVE)); then exit 130; fi
-            key=$(ui_prompt_key "Interrupted while working on $name: [r]etry  [s]kip it  [q]uit (re-run later to resume)" rsq)
+            key=$(ui_prompt_key "Interrupted $name - [r]etry  [s]kip  [q]uit (resume later)" rsq)
             case $key in
                 r) attempt=0; continue ;;
                 s) FAIL_REASON="skipped by user"
@@ -304,15 +311,14 @@ process_item() {
             esac
         fi
         if ((rc == 2)); then
-            ui_note error "$FAIL_REASON"
-            ui_note dim "Not retrying - this looks permanent (bad name, dependency problem...)."
+            ui_note dim "Not retrying - this looks permanent."
             break
         fi
         ((attempt >= MAX_ATTEMPTS)) && break
 
         ui_note warn "Attempt $attempt/$MAX_ATTEMPTS failed: $FAIL_REASON"
         local backoff=$((attempt * 10))
-        key=$(ui_countdown "$backoff" "Retrying $name in %ds   [r] retry now  [s] skip  [q] quit & resume later")
+        key=$(ui_countdown "$backoff" "Retrying $name in %ds - [r]etry now  [s]kip  [q]uit (resume later)")
         case $key in
             s) FAIL_REASON="skipped by user"
                finish_item "$src" "$name" SKIP $((SECONDS - start)) "$kind"
@@ -334,13 +340,21 @@ finish_item() {
     if [[ $kind == item ]]; then
         ITEMS_PROCESSED=$((ITEMS_PROCESSED + 1))
         case $status in
-            OK) COUNT_OK=$((COUNT_OK + 1)) ;;
+            OK) COUNT_OK=$((COUNT_OK + 1))
+                if is_present_note "$detail"; then
+                    COUNT_PRESENT=$((COUNT_PRESENT + 1))
+                elif [[ $src == remove ]]; then
+                    COUNT_REMOVED=$((COUNT_REMOVED + 1))
+                fi ;;
             FAIL) COUNT_FAIL=$((COUNT_FAIL + 1)) ;;
             SKIP) COUNT_SKIP=$((COUNT_SKIP + 1)) ;;
         esac
     fi
     ui_item_done "$src" "$name" "$status" "$secs" "$detail"
 }
+
+# is_present_note DETAIL - true for a success that needed no change
+is_present_note() { [[ $1 == "already installed"* || $1 == "already removed"* || $1 == "done in a previous run" ]]; }
 
 # fail_items SOURCE REASON NAME... - mark items failed without trying them
 # (used when a whole source's setup failed, e.g. Homebrew wouldn't install)

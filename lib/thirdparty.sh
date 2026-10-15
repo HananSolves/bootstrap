@@ -50,33 +50,46 @@ install_thirdparty() {
     "tp_${app//-/_}"
 }
 
-# key_fingerprint FILE - primary-key fingerprint of an OpenPGP key file
-# (read in a throwaway keyring, so nothing touches ~/.gnupg)
-key_fingerprint() {
+# key_fingerprints FILE - the fingerprint of every primary key in an
+# OpenPGP key file, one per line (subkeys aside). Read in a throwaway
+# keyring, so nothing touches ~/.gnupg.
+key_fingerprints() {
     local home
     home=$(mktemp -d) || return 1
     gpg --homedir "$home" --batch --show-keys --with-colons "$1" 2>/dev/null |
-        awk -F: '$1 == "fpr" { print $10; exit }'
+        awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }'
     rm -rf -- "$home"
 }
+
+# key_is FILE FINGERPRINT - true if FILE holds exactly one key, and it's
+# that one. A file with the right key plus an extra one must fail: rpm
+# --import would trust every key in it.
+key_is() { [[ $(key_fingerprints "$1") == "$2" ]]; }
 
 # tp_install_key NAME URL FINGERPRINT - download a vendor's signing key,
 # refuse it unless its fingerprint is the pinned one, then save it as
 # $RPM_KEY_DIR/RPM-GPG-KEY-NAME and add it to rpm's keyring
 tp_install_key() {
     local url=$2 want=$3 file="$DOWNLOAD_DIR/RPM-GPG-KEY-$1" dest="$RPM_KEY_DIR/RPM-GPG-KEY-$1" got
-    if [[ -f $dest && $(key_fingerprint "$dest") == "$want" ]]; then
+    if [[ -f $dest ]] && key_is "$dest" "$want"; then
         return 0
     fi
     download "$url" "$file" || return
-    got=$(key_fingerprint "$file")
-    if [[ $got != "$want" ]]; then
+    if ! key_is "$file" "$want"; then
+        got=$(key_fingerprints "$file" | paste -sd ' ')
         rm -f -- "$file"
-        FAIL_REASON="signing key at $url has fingerprint ${got:-unreadable}, expected $want - refusing it"
+        FAIL_REASON="signing key at $url is ${got:-unreadable}, expected only $want - refusing it"
         return 2
     fi
     run_cmd --root install -D -m 0644 "$file" "$dest" || return
     rm -f -- "$file"
+    # check the root-owned copy too: the download sits in a user-writable
+    # folder and could have been swapped between the check and the copy
+    if ! key_is "$dest" "$want"; then
+        run_cmd --root rm -f -- "$dest"
+        FAIL_REASON="$dest changed while being installed - refusing it"
+        return 2
+    fi
     run_cmd --root rpm --import "$dest"
 }
 
@@ -102,6 +115,16 @@ tp_add_repo_url() {
     tmp="$DOWNLOAD_DIR/$1"
     download "$url" "$tmp" || return
     grep -q '^\[' "$tmp" || { FAIL_REASON="$url did not return a .repo file"; rm -f -- "$tmp"; return 1; }
+    # every section must check package signatures - refuse a file that
+    # turns that off (or never turns it on)
+    if ! awk '/^\[/ { if (sec && !ok) bad = 1; sec = 1; ok = 0 }
+              /^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*1[[:space:]]*$/ { ok = 1 }
+              /^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*0/ { bad = 1 }
+              END { exit !(sec && ok && !bad) }' "$tmp"; then
+        rm -f -- "$tmp"
+        FAIL_REASON="$url doesn't enable gpgcheck=1 in every section - refusing it"
+        return 2
+    fi
     tp_install_repo_file "$tmp" "$dest" || rc=$?
     return "$rc"
 }

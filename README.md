@@ -95,19 +95,22 @@ What happens:
 
 Every third-party package is signature-checked before it's installed:
 
-| App                  | Package check                         | Repo metadata check    |
-|----------------------|---------------------------------------|------------------------|
-| VS Code              | Microsoft key                         | Microsoft key          |
-| Cursor               | Anysphere key                         | Anysphere key          |
-| Antigravity          | Google Linux packages key             | Artifact Registry key  |
-| Mullvad Browser      | Mullvad key (from Mullvad's repo file)| —                      |
-| WezTerm (Copr)       | Copr project key                      | —                      |
+| App                  | Package check                     | Repo metadata check |
+|----------------------|-----------------------------------|---------------------|
+| VS Code              | Microsoft key                     | Microsoft key       |
+| Cursor               | Anysphere key                     | Anysphere key       |
+| Antigravity          | Google Linux packages key         | — (see below)       |
+| Mullvad Browser      | Mullvad key                       | Mullvad key         |
+| WezTerm (Copr)       | Copr project key                  | — (not signed)      |
 | Proton Authenticator | SHA-512 from Proton's update manifest (Proton doesn't sign this RPM) | — |
 
-The Microsoft, Anysphere, Google and Artifact Registry keys are **pinned by fingerprint** in `lib/thirdparty.sh`:
-a downloaded key is refused unless its fingerprint matches, then saved to `/etc/pki/rpm-gpg/` and referenced from the
-repo file as a local `file://` path, so nothing fetched later can swap it. If a vendor rotates its key, installs from
-that repo fail with a signature error until the new fingerprint (from the vendor's documentation) is put there.
+The vendors' public keys are **committed in [`keys/`](keys/)** (fingerprints in `keys/sources.tsv`) and installed
+from there to `/etc/pki/rpm-gpg/`; every `.repo` file is written by the script and points at that local copy.
+Nothing trust-related is downloaded or parsed at install time, so a tampered download can't add a key or turn
+checking off. A weekly CI job checks that each vendor still publishes the same key — if one rotates, verify the new
+key from the vendor's documentation and update `keys/`.
+
+Antigravity's repo metadata is signed, but dnf5 rejects that signature, so only its packages are checked.
 
 ## Removing packages
 
@@ -156,5 +159,6 @@ Packages added through the search screens are appended to these files if you cho
 - **package lists** — checks that every entry still exists: dnf names and groups in Fedora's repos, Flatpak IDs on
   Flathub, formulae in Homebrew's index. A renamed or dropped package shows up as an annotation on its line. The
   weekly run catches packages that disappear upstream while the repo doesn't change.
+- **vendor keys** — checks that each vendor still publishes the key committed in `keys/`
 - **smoke test** — runs `bootstrap.sh` for real in a Fedora container (install, remove, then a second run that must
   change nothing)

@@ -6,12 +6,14 @@
 # everything else.
 #
 # Signatures: every repo here checks package signatures (gpgcheck) and, where
-# the vendor signs it, the repo metadata too (repo_gpgcheck). Vendor keys are
-# pinned by fingerprint below: a key is downloaded, refused unless its
-# fingerprint matches, and saved to /etc/pki/rpm-gpg/ - the repo files point
-# at that local copy, so nothing fetched later can swap the key. If a vendor
-# rotates its key, installs fail with a signature error until the new
-# fingerprint (from the vendor's docs) is put here.
+# the vendor signs it, the repo metadata too (repo_gpgcheck). The vendors'
+# public keys are committed in keys/ (fingerprints in keys/sources.tsv) and
+# installed from there to /etc/pki/rpm-gpg/; every .repo file is written here
+# and points at that local copy. Nothing trust-related is downloaded or
+# parsed at install time, so a tampered download can't slip in another key
+# or switch checking off. ci/check-keys.sh notices when a vendor rotates its
+# key; until keys/ is updated, installs from that repo fail with a
+# signature error rather than trusting the new key blindly.
 #
 # To add an app: append its id to THIRDPARTY_APPS, give it a TP_DESC entry,
 # and write tp_<id with - replaced by _>.
@@ -50,46 +52,13 @@ install_thirdparty() {
     "tp_${app//-/_}"
 }
 
-# key_fingerprints FILE - the fingerprint of every primary key in an
-# OpenPGP key file, one per line (subkeys aside). Read in a throwaway
-# keyring, so nothing touches ~/.gnupg.
-key_fingerprints() {
-    local home
-    home=$(mktemp -d) || return 1
-    gpg --homedir "$home" --batch --show-keys --with-colons "$1" 2>/dev/null |
-        awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }'
-    rm -rf -- "$home"
-}
-
-# key_is FILE FINGERPRINT - true if FILE holds exactly one key, and it's
-# that one. A file with the right key plus an extra one must fail: rpm
-# --import would trust every key in it.
-key_is() { [[ $(key_fingerprints "$1") == "$2" ]]; }
-
-# tp_install_key NAME URL FINGERPRINT - download a vendor's signing key,
-# refuse it unless its fingerprint is the pinned one, then save it as
-# $RPM_KEY_DIR/RPM-GPG-KEY-NAME and add it to rpm's keyring
+# tp_install_key NAME - install keys/NAME.asc as $RPM_KEY_DIR/RPM-GPG-KEY-NAME
+# and add it to rpm's keyring
 tp_install_key() {
-    local url=$2 want=$3 file="$DOWNLOAD_DIR/RPM-GPG-KEY-$1" dest="$RPM_KEY_DIR/RPM-GPG-KEY-$1" got
-    if [[ -f $dest ]] && key_is "$dest" "$want"; then
-        return 0
-    fi
-    download "$url" "$file" || return
-    if ! key_is "$file" "$want"; then
-        got=$(key_fingerprints "$file" | paste -sd ' ')
-        rm -f -- "$file"
-        FAIL_REASON="signing key at $url is ${got:-unreadable}, expected only $want - refusing it"
-        return 2
-    fi
-    run_cmd --root install -D -m 0644 "$file" "$dest" || return
-    rm -f -- "$file"
-    # check the root-owned copy too: the download sits in a user-writable
-    # folder and could have been swapped between the check and the copy
-    if ! key_is "$dest" "$want"; then
-        run_cmd --root rm -f -- "$dest"
-        FAIL_REASON="$dest changed while being installed - refusing it"
-        return 2
-    fi
+    local src="$SCRIPT_DIR/keys/$1.asc" dest="$RPM_KEY_DIR/RPM-GPG-KEY-$1"
+    [[ -f $src ]] || { FAIL_REASON="$src is missing - re-clone the repo"; return 2; }
+    [[ -f $dest ]] && cmp -s "$src" "$dest" && return 0
+    run_cmd --root install -D -m 0644 "$src" "$dest" || return
     run_cmd --root rpm --import "$dest"
 }
 
@@ -108,27 +77,6 @@ tp_add_repo() {
     tp_install_repo_file "$tmp" "$dest"
 }
 
-# tp_add_repo_url FILE URL - download a .repo file and install it
-tp_add_repo_url() {
-    local dest=$YUM_REPOS_DIR/$1 url=$2 tmp rc=0
-    [[ -f $dest ]] && return 0
-    tmp="$DOWNLOAD_DIR/$1"
-    download "$url" "$tmp" || return
-    grep -q '^\[' "$tmp" || { FAIL_REASON="$url did not return a .repo file"; rm -f -- "$tmp"; return 1; }
-    # every section must check package signatures - refuse a file that
-    # turns that off (or never turns it on)
-    if ! awk '/^\[/ { if (sec && !ok) bad = 1; sec = 1; ok = 0 }
-              /^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*1[[:space:]]*$/ { ok = 1 }
-              /^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*0/ { bad = 1 }
-              END { exit !(sec && ok && !bad) }' "$tmp"; then
-        rm -f -- "$tmp"
-        FAIL_REASON="$url doesn't enable gpgcheck=1 in every section - refusing it"
-        return 2
-    fi
-    tp_install_repo_file "$tmp" "$dest" || rc=$?
-    return "$rc"
-}
-
 tp_install_repo_file() {
     local src=$1 dest=$2 rc=0
     # make every section non-blocking if its metadata can't be fetched
@@ -139,8 +87,7 @@ tp_install_repo_file() {
 }
 
 tp_code() {
-    tp_install_key microsoft https://packages.microsoft.com/keys/microsoft.asc \
-        BC528686B50D79E339D3721CEB3E94ADBE1229CF || return
+    tp_install_key microsoft || return
     tp_add_repo vscode.repo <<EOF || return
 [code]
 name=Visual Studio Code
@@ -156,8 +103,7 @@ EOF
 
 tp_cursor() {
     # packages and repo metadata are both signed with Anysphere's key
-    tp_install_key cursor https://downloads.cursor.com/keys/anysphere.asc \
-        380FF4BCDC34A4BD92A3565342A1772E62E492D6 || return
+    tp_install_key cursor || return
     tp_add_repo cursor.repo <<EOF || return
 [cursor]
 name=Cursor
@@ -172,38 +118,57 @@ EOF
 }
 
 tp_antigravity() {
-    # packages are signed with Google's Linux packages key, the repo
-    # metadata with Artifact Registry's repository key
-    tp_install_key google https://dl.google.com/linux/linux_signing_key.pub \
-        EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796 || return
-    tp_install_key artifact-registry https://us-central1-yum.pkg.dev/doc/repo-signing-key.gpg \
-        35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3 || return
+    # Packages are signed with Google's Linux packages key. The repo metadata
+    # is signed too (Artifact Registry key), but dnf5 rejects that signature
+    # ("Bad PGP signature", though gpg accepts it), so repo_gpgcheck is off
+    # here - every package is still signature-checked.
+    tp_install_key google || return
     tp_add_repo antigravity.repo <<EOF || return
 [antigravity-rpm]
 name=Antigravity RPM Repository
 baseurl=https://us-central1-yum.pkg.dev/projects/antigravity-auto-updater-dev/antigravity-rpm
 enabled=1
 gpgcheck=1
-repo_gpgcheck=1
-gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-google file://$RPM_KEY_DIR/RPM-GPG-KEY-artifact-registry
+repo_gpgcheck=0
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-google
 skip_if_unavailable=1
 EOF
     install_dnf antigravity
 }
 
 tp_mullvad_browser() {
-    tp_add_repo_url mullvad.repo https://repository.mullvad.net/rpm/stable/mullvad.repo || return
+    # packages and repo metadata are both signed with Mullvad's key
+    tp_install_key mullvad || return
+    tp_add_repo mullvad.repo <<EOF || return
+[mullvad-stable]
+name=Mullvad VPN
+baseurl=https://repository.mullvad.net/rpm/stable/\$basearch
+type=rpm
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-mullvad
+skip_if_unavailable=1
+EOF
     install_dnf mullvad-browser
 }
 
 tp_wezterm() {
-    # Same file name `dnf copr enable` would create, without needing the
-    # dnf5 copr plugin to be installed.
-    local fedora
-    fedora=$(rpm -E %fedora)
-    tp_add_repo_url "_copr:copr.fedorainfracloud.org:wezfurlong:wezterm-nightly.repo" \
-        "https://copr.fedorainfracloud.org/coprs/wezfurlong/wezterm-nightly/repo/fedora-$fedora/wezfurlong-wezterm-nightly-fedora-$fedora.repo" ||
-        return
+    # the same repo `dnf copr enable wezfurlong/wezterm-nightly` would add,
+    # without needing the dnf copr plugin
+    tp_install_key copr-wezterm || return
+    tp_add_repo "_copr:copr.fedorainfracloud.org:wezfurlong:wezterm-nightly.repo" <<EOF || return
+[copr:copr.fedorainfracloud.org:wezfurlong:wezterm-nightly]
+name=Copr repo for wezterm-nightly owned by wezfurlong
+baseurl=https://download.copr.fedorainfracloud.org/results/wezfurlong/wezterm-nightly/fedora-\$releasever-\$basearch/
+type=rpm-md
+enabled=1
+enabled_metadata=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=file://$RPM_KEY_DIR/RPM-GPG-KEY-copr-wezterm
+skip_if_unavailable=1
+EOF
     install_dnf wezterm
 }
 

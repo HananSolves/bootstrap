@@ -1,0 +1,8 @@
+# name	fingerprint	where the vendor publishes it
+# keys/NAME.asc is a clean export of that key; ci/check-keys.sh checks
+# weekly that each vendor still serves the same key.
+microsoft	BC528686B50D79E339D3721CEB3E94ADBE1229CF	https://packages.microsoft.com/keys/microsoft.asc
+cursor	380FF4BCDC34A4BD92A3565342A1772E62E492D6	https://downloads.cursor.com/keys/anysphere.asc
+google	EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796	https://dl.google.com/linux/linux_signing_key.pub
+mullvad	A1198702FC3E0A09A9AE5B75D5A1D4F266DE8DDF	https://repository.mullvad.net/rpm/mullvad-keyring.asc
+copr-wezterm	FD909B6288A84250AD58020FA69891C5CEA2757D	https://download.copr.fedorainfracloud.org/results/wezfurlong/wezterm-nightly/pubkey.gpg

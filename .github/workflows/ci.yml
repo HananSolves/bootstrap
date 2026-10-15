@@ -36,6 +36,17 @@ jobs:
       - name: Check every listed package exists
         run: ci/check-lists.sh
 
+  keys:
+    name: vendor signing keys unchanged
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install tools
+        run: dnf -y -q install git gnupg2
+      - uses: actions/checkout@v5
+      - name: Compare keys/ with what each vendor publishes
+        run: ci/check-keys.sh
+
   smoke:
     name: bootstrap.sh in a Fedora container
     runs-on: ubuntu-latest
